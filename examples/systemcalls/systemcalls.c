@@ -52,14 +52,14 @@ bool do_exec(int count, ...)
     int status = 0;
     if(pid==0) {
         // child
-        if(execv(command[0], &command[1])) {
+        if(execv(command[0], command)) {
             return false;
         } else {
             return true;
         }
     } else {
         // parent. wait until child returns.
-        while(waitpid(pid, &status, 0));
+        waitpid(pid, &status, 0);
         printf("status = 0x%x = %d\n", status, status);
 
         if(!status) {
@@ -104,7 +104,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
 */
     pid_t pid;
 
-    int fd = open("redirected.txt", O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
     if (fd < 0) {
         perror("open"); abort();
     }
@@ -118,7 +118,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
             perror("dup2"); abort();
         }
         close(fd);
-        if(execv(command[0], &command[1])) {
+        if(execv(command[0], command)) {
             perror("execv");
             return false;
         } else {
@@ -127,7 +127,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     default:
         int status = 0;
         close(fd);
-        while(waitpid(pid, &status, 0));
+        waitpid(pid, &status, 0);
         printf("status = 0x%x = %d\n", status, status);
 
         if(!status) {
