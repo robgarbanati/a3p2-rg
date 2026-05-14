@@ -45,6 +45,7 @@ bool do_exec(int count, ...)
     for(i=0; i<count; i++)
     {
         command[i] = va_arg(args, char *);
+        printf("command[%d] = %s\n", i, command[i]);
     }
     command[count] = NULL;
 
@@ -52,11 +53,8 @@ bool do_exec(int count, ...)
     int status = 0;
     if(pid==0) {
         // child
-        if(execv(command[0], command)) {
-            return false;
-        } else {
-            return true;
-        }
+        execv(command[0], command);
+        exit(EXIT_FAILURE);
     } else {
         // parent. wait until child returns.
         waitpid(pid, &status, 0);
@@ -118,12 +116,9 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
             perror("dup2"); abort();
         }
         close(fd);
-        if(execv(command[0], command)) {
-            perror("execv");
-            return false;
-        } else {
-            return true;
-        }
+        execv(command[0], command);
+        perror("execv");
+        exit(EXIT_FAILURE);
     default:
         int status = 0;
         close(fd);
