@@ -23,6 +23,11 @@ fi
 
 mkdir -p ${OUTDIR}
 
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to make dir '${OUTDIR}'"
+    exit 1
+fi
+
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/linux-stable" ]; then
     #Clone only if the repository does not exist.
@@ -35,6 +40,10 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     git checkout ${KERNEL_VERSION}
 
     # TODO: Add your kernel build steps here
+    echo "about to make config"
+    make config
+    echo "about to make..."
+    make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
 fi
 
 echo "Adding the Image in outdir"
