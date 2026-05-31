@@ -45,7 +45,7 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     echo "about to make config"
     make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
     echo "about to make..."
-    make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
+    make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all
 fi
 
 echo "Adding the Image in outdir"
@@ -59,6 +59,9 @@ then
 fi
 
 # TODO: Create necessary base directories
+mkdir bin dev etc home lib lib64 proc sbin sys tmp usr var
+mkdir -p usr/bin usr/lib usr/sbin
+mkdir -p var/log
 
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
@@ -66,12 +69,15 @@ then
 git clone git://busybox.net/busybox.git
     cd busybox
     git checkout ${BUSYBOX_VERSION}
-    # TODO:  Configure busybox
+    make distclean
+    make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
 else
     cd busybox
 fi
 
 # TODO: Make and install busybox
+make -j4 CONFIG_PREFIX=${OUTDIR} ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
+make -j4 CONFIG_PREFIX=${OUTDIR} ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
 
 echo "Library dependencies"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
