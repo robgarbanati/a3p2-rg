@@ -59,6 +59,8 @@ then
 fi
 
 # TODO: Create necessary base directories
+mkdir -p ${OUTDIR}/rootfs
+cd ${OUTDIR}/rootfs
 mkdir -p bin dev etc home lib lib64 proc sbin sys tmp usr var
 mkdir -p usr/bin usr/lib usr/sbin
 mkdir -p var/log
@@ -80,24 +82,43 @@ make -j4 CONFIG_PREFIX=${OUTDIR} ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
 make -j4 CONFIG_PREFIX=${OUTDIR} ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
 
 echo "Library dependencies"
+cd ${OUTDIR}
 pwd
-${CROSS_COMPILE}readelf -a ../bin/busybox | grep "program interpreter"
-${CROSS_COMPILE}readelf -a ../bin/busybox | grep "Shared library"
+${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
+${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
 SYSROOT=$(aarch64-none-linux-gnu-gcc --print-sysroot)
-cp $(find ${SYSROOT} -name "ld-linux-aarch64.so.1") ${OUTDIR}/lib/
-cp $(find ${SYSROOT} -name "libm.so.6") ${OUTDIR}/lib64/
-cp $(find ${SYSROOT} -name "libresolv.so.2") ${OUTDIR}/lib64/
-cp $(find ${SYSROOT} -name "libc.so.6") ${OUTDIR}/lib64/
+cp $(find ${SYSROOT} -name "ld-linux-aarch64.so.1") ${OUTDIR}/rootfs/lib/
+cp $(find ${SYSROOT} -name "libm.so.6") ${OUTDIR}/rootfs/lib64/
+cp $(find ${SYSROOT} -name "libresolv.so.2") ${OUTDIR}/rootfs/lib64/
+cp $(find ${SYSROOT} -name "libc.so.6") ${OUTDIR}/rootfs/lib64/
 
 # TODO: Make device nodes
+cd ${OUTDIR}/rootfs
+pwd
+ls
+ls dev
+sudo mknod -m 666 dev/null c 1 3
+sudo mknod -m 666 dev/console c 5 1
 
 # TODO: Clean and build the writer utility
+cd ${FINDER_APP_DIR}
+make clean
+make
 
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
+cp writer ${OUTDIR}/rootfs/home
+cp writer.sh ${OUTDIR}/rootfs/home
+cp finder.sh ${OUTDIR}/rootfs/home
+cp finder-test.sh ${OUTDIR}/rootfs/home
 
 # TODO: Chown the root directory
+sudo chown root:root ${OUTDIR}/rootfs
 
 # TODO: Create initramfs.cpio.gz
+cd ${OUTDIR}/rootfs
+find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
+cd ${OUTDIR}
+gzip -f initramfs.cpio
