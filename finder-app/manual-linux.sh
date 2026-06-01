@@ -59,7 +59,7 @@ then
 fi
 
 # TODO: Create necessary base directories
-mkdir bin dev etc home lib lib64 proc sbin sys tmp usr var
+mkdir -p bin dev etc home lib lib64 proc sbin sys tmp usr var
 mkdir -p usr/bin usr/lib usr/sbin
 mkdir -p var/log
 
@@ -80,10 +80,17 @@ make -j4 CONFIG_PREFIX=${OUTDIR} ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
 make -j4 CONFIG_PREFIX=${OUTDIR} ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
 
 echo "Library dependencies"
-${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
-${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
+pwd
+${CROSS_COMPILE}readelf -a ../bin/busybox | grep "program interpreter"
+${CROSS_COMPILE}readelf -a ../bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
+SYSROOT=$(aarch64-none-linux-gnu-gcc --print-sysroot)
+cp /lib/ld-linux.so.2 ${OUTDIR}/lib
+echo $(find ${SYSROOT} -name "libm.so.6")
+cp $(find ${SYSROOT} -name "libm.so.6") ${OUTDIR}/lib64/
+cp $(find ${SYSROOT} -name "libresolve.so.2") ${OUTDIR}/lib64/
+cp $(find ${SYSROOT} -name "libc.so.6") ${OUTDIR}/lib64/
 
 # TODO: Make device nodes
 
