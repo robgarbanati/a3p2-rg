@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 if [ "$#" -ne 2 ]; then
     echo "Expected 2 arguments, but got $#"
