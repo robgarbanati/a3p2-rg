@@ -101,16 +101,17 @@ sudo mknod -m 666 dev/console c 5 1
 # TODO: Clean and build the writer utility
 cd ${FINDER_APP_DIR}
 make clean
-make
+make CROSS_COMPILE=${CROSS_COMPILE}
 
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
 cp writer ${OUTDIR}/rootfs/home
-cp writer.sh ${OUTDIR}/rootfs/home
 cp finder.sh ${OUTDIR}/rootfs/home
 cp finder-test.sh ${OUTDIR}/rootfs/home
+mkdir -p ${OUTDIR}/rootfs/home/conf
+cp conf/username.txt ${OUTDIR}/rootfs/home/conf
+cp conf/assignment.txt ${OUTDIR}/rootfs/home/conf
 cp autorun-qemu.sh ${OUTDIR}/rootfs/home
-cp -r conf ${OUTDIR}/rootfs/home
 
 # TODO: Chown the root directory
 sudo chown -R root:root ${OUTDIR}/rootfs
