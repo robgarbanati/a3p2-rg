@@ -2,7 +2,9 @@ SRC := writer.c
 TARGET := writer
 CC=$(CROSS_COMPILE)gcc
 
-$(TARGET):
+all: $(TARGET)
+
+$(TARGET): $(SRC)
 	$(CC) -o $(TARGET) $(SRC)
 clean:
 	rm -f *.o $(TARGET)
