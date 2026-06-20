@@ -7,7 +7,8 @@ set -u
 
 NUMFILES=10
 WRITESTR=AELD_IS_FUN
-WRITEDIR=/tmp/aeld-data
+# WRITEDIR=/tmp/aeld-data
+WRITEDIR=/tmp
 username=$(cat conf/username.txt)
 
 if [ $# -lt 3 ]
@@ -54,7 +55,9 @@ echo "Removing the old writer utility and compiling as a native application"
 
 for i in $( seq 1 $NUMFILES)
 do
-	./writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+	# ./writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+	# if this is in path, i think no ./
+	writer "$WRITEDIR/assignment4-result.txt" "$WRITESTR"
 done
 
 OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
