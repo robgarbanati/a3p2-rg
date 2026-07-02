@@ -53,20 +53,25 @@ int main(void) {
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
         syslog(LOG_DEBUG, "Accepted connection from %s", client_ip);
 
-        FILE *f = fopen(DATA_FILE, "a");
-        if (f == NULL) {
+        FILE *data_f = fopen(DATA_FILE, "a");
+        if (data_f == NULL) {
             perror("fopen");
             close(connfd);
             break;
         }
 
+        // ptr to beginning of the packet
         char *packet = NULL;
+        // keep track of the size of the packet so far. Basically this is the length of 
+        // allocated data so far.
         size_t packet_len = 0;
+        // Stack buffer to get portions of packets in reasonable sizes.
         char chunk[RECV_CHUNK];
-        ssize_t n;
+        // rcvd_data_len
+        ssize_t rcvd_data_len;
 
-        while ((n = recv(connfd, chunk, sizeof(chunk), 0)) > 0) {
-            char *tmp = realloc(packet, packet_len + n + 1);
+        while ((rcvd_data_len = recv(connfd, chunk, sizeof(chunk), 0)) > 0) {
+            char *tmp = realloc(packet, packet_len + rcvd_data_len + 1);
             if (tmp == NULL) {
                 syslog(LOG_ERR, "realloc failed, discarding packet");
                 free(packet);
@@ -75,24 +80,27 @@ int main(void) {
                 continue;
             }
             packet = tmp;
-            memcpy(packet + packet_len, chunk, n);
-            packet_len += n;
+            memcpy(packet + packet_len, chunk, rcvd_data_len);
+            packet_len += rcvd_data_len;
             packet[packet_len] = '\0';
 
             char *start = packet;
             char *nl;
+            // write 1 byte from start of packet to newline we found into 
             while ((nl = strchr(start, '\n')) != NULL) {
-                fwrite(start, 1, nl - start + 1, f);
+                fwrite(start, 1, nl - start + 1, data_f);
                 start = nl + 1;
             }
 
+            // get length of bytes after the last newline we found.
             size_t remaining = packet_len - (start - packet);
+            // move the bytes from after last newline to start of packet.
             memmove(packet, start, remaining);
             packet_len = remaining;
         }
 
         free(packet);
-        fclose(f);
+        fclose(data_f);
         close(connfd);
     }
 
