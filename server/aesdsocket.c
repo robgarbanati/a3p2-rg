@@ -8,8 +8,8 @@
 #include <unistd.h>
 
 #define SERVER_PORT 9000
-#define DATA_FILE   "/var/tmp/aesdsocket"
-#define RECV_BUF    1024
+#define DATA_FILE   "/var/tmp/aesdsocketdata"
+#define RECV_CHUNK  1024
 
 int main(void) {
     int server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -60,11 +60,38 @@ int main(void) {
             break;
         }
 
-        char buf[RECV_BUF];
+        char *packet = NULL;
+        size_t packet_len = 0;
+        char chunk[RECV_CHUNK];
         ssize_t n;
-        while ((n = recv(connfd, buf, sizeof(buf), 0)) > 0)
-            fwrite(buf, 1, n, f);
 
+        while ((n = recv(connfd, chunk, sizeof(chunk), 0)) > 0) {
+            char *tmp = realloc(packet, packet_len + n + 1);
+            if (tmp == NULL) {
+                syslog(LOG_ERR, "realloc failed, discarding packet");
+                free(packet);
+                packet = NULL;
+                packet_len = 0;
+                continue;
+            }
+            packet = tmp;
+            memcpy(packet + packet_len, chunk, n);
+            packet_len += n;
+            packet[packet_len] = '\0';
+
+            char *start = packet;
+            char *nl;
+            while ((nl = strchr(start, '\n')) != NULL) {
+                fwrite(start, 1, nl - start + 1, f);
+                start = nl + 1;
+            }
+
+            size_t remaining = packet_len - (start - packet);
+            memmove(packet, start, remaining);
+            packet_len = remaining;
+        }
+
+        free(packet);
         fclose(f);
         close(connfd);
     }
