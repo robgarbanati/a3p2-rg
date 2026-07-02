@@ -8,6 +8,8 @@
 #include <unistd.h>
 
 #define SERVER_PORT 9000
+#define DATA_FILE   "/var/tmp/aesdsocket"
+#define RECV_BUF    1024
 
 int main(void) {
     int server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -51,8 +53,19 @@ int main(void) {
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
         syslog(LOG_DEBUG, "Accepted connection from %s", client_ip);
 
-        // TODO: handle connection
+        FILE *f = fopen(DATA_FILE, "a");
+        if (f == NULL) {
+            perror("fopen");
+            close(connfd);
+            break;
+        }
 
+        char buf[RECV_BUF];
+        ssize_t n;
+        while ((n = recv(connfd, buf, sizeof(buf), 0)) > 0)
+            fwrite(buf, 1, n, f);
+
+        fclose(f);
         close(connfd);
     }
 
