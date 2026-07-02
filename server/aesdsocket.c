@@ -54,9 +54,9 @@ int main(void) {
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
         syslog(LOG_DEBUG, "Accepted connection from %s", client_ip);
 
-        FILE *data_f = fopen(DATA_FILE, "a");
-        if (data_f == NULL) {
-            perror("fopen");
+        int data_fd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, 0644);
+        if (data_fd == -1) {
+            perror("open");
             close(connfd);
             break;
         }
@@ -71,10 +71,7 @@ int main(void) {
         // rcvd_data_len
         ssize_t rcvd_data_len;
 
-        // recv from connfd into chunk.
-        // Keep connection open until client sends FIN. (recv returns 0).
         while ((rcvd_data_len = recv(connfd, chunk, sizeof(chunk), 0)) > 0) {
-            // Size up our packet by rcvd_data_len.
             char *tmp = realloc(packet, packet_len + rcvd_data_len + 1);
             if (tmp == NULL) {
                 syslog(LOG_ERR, "realloc failed, discarding packet");
@@ -84,16 +81,15 @@ int main(void) {
                 continue;
             }
             packet = tmp;
-            // append chunk to packet.
             memcpy(packet + packet_len, chunk, rcvd_data_len);
             packet_len += rcvd_data_len;
             packet[packet_len] = '\0';
 
             char *start = packet;
             char *nl;
-            // write 1 byte from start of packet to newline we found into 
             while ((nl = strchr(start, '\n')) != NULL) {
-                fwrite(start, 1, nl - start + 1, data_f);
+                // write from start of packet to newline we found into data_fd
+                write(data_fd, start, nl - start + 1);
                 start = nl + 1;
             }
 
@@ -105,22 +101,14 @@ int main(void) {
         }
 
         free(packet);
-        fclose(data_f);
 
-        // reopen without stdio streaming.
-        int file_fd = open(DATA_FILE, O_RDONLY);
-        if (file_fd == -1) {
-            perror("open");
-        } else {
-            char send_buf[RECV_CHUNK];
-            ssize_t nr;
-            // read into send_buf.
-            while ((nr = read(file_fd, send_buf, sizeof(send_buf))) > 0)
-                // send in chunks (send send_buf).
-                send(connfd, send_buf, nr, 0);
-            close(file_fd);
-        }
+        lseek(data_fd, 0, SEEK_SET);
+        char send_buf[RECV_CHUNK];
+        ssize_t nr;
+        while ((nr = read(data_fd, send_buf, sizeof(send_buf))) > 0)
+            send(connfd, send_buf, nr, 0);
 
+        close(data_fd);
         close(connfd);
     }
 
