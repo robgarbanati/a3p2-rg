@@ -1,0 +1,4 @@
+# make aesdsocket
+all:
+
+aesdsocket:
