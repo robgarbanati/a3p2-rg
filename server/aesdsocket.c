@@ -2,6 +2,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +13,22 @@
 #define DATA_FILE   "/var/tmp/aesdsocketdata"
 #define RECV_CHUNK  1024
 
+static volatile sig_atomic_t caught_signal = 0;
+
+static void signal_handler(int sig) {
+    (void)sig;
+    caught_signal = 1;
+}
+
 int main(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = signal_handler;
+    sigaction(SIGINT,  &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
+    openlog("aesdsocket", LOG_PID, LOG_USER);
+
     int server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket_fd == -1) {
         perror("socket");
@@ -39,27 +55,24 @@ int main(void) {
         return -1;
     }
 
-    openlog("aesdsocket", LOG_PID, LOG_USER);
+    // Opened once; persists across all connections so packets accumulate.
+    int data_fd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, 0644);
+    if (data_fd == -1) {
+        perror("open");
+        close(server_socket_fd);
+        return -1;
+    }
 
-    while (1) {
+    while (!caught_signal) {
         struct sockaddr_in client_addr;
         socklen_t client_addrlen = sizeof(client_addr);
         int connfd = accept(server_socket_fd, (struct sockaddr *)&client_addr, &client_addrlen);
-        if (connfd == -1) {
-            perror("accept");
+        if (connfd == -1)
             break;
-        }
 
         char client_ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
         syslog(LOG_DEBUG, "Accepted connection from %s", client_ip);
-
-        int data_fd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, 0644);
-        if (data_fd == -1) {
-            perror("open");
-            close(connfd);
-            break;
-        }
 
         // ptr to beginning of the packet
         char *packet = NULL;
@@ -88,30 +101,32 @@ int main(void) {
             char *start = packet;
             char *nl;
             while ((nl = strchr(start, '\n')) != NULL) {
-                // write from start of packet to newline we found into data_fd
                 write(data_fd, start, nl - start + 1);
                 start = nl + 1;
+
+                // Send full file contents back after each complete packet.
+                // lseek doesn't affect O_APPEND — writes still go to end.
+                lseek(data_fd, 0, SEEK_SET);
+                char send_buf[RECV_CHUNK];
+                ssize_t nr;
+                while ((nr = read(data_fd, send_buf, sizeof(send_buf))) > 0)
+                    send(connfd, send_buf, nr, 0);
             }
 
-            // get length of bytes after the last newline we found.
             size_t remaining = packet_len - (start - packet);
-            // move the bytes from after last newline to start of packet.
             memmove(packet, start, remaining);
             packet_len = remaining;
         }
 
         free(packet);
-
-        lseek(data_fd, 0, SEEK_SET);
-        char send_buf[RECV_CHUNK];
-        ssize_t nr;
-        while ((nr = read(data_fd, send_buf, sizeof(send_buf))) > 0)
-            send(connfd, send_buf, nr, 0);
-
-        close(data_fd);
+        syslog(LOG_DEBUG, "Closed connection from %s", client_ip);
         close(connfd);
     }
 
+    syslog(LOG_DEBUG, "Caught signal, exiting");
     close(server_socket_fd);
+    close(data_fd);
+    unlink(DATA_FILE);
+    closelog();
     return 0;
 }

@@ -1,4 +1,12 @@
-# make aesdsocket
-all:
+CC      = $(CROSS_COMPILE)gcc
+CFLAGS  = -Wall -Werror
 
-aesdsocket:
+.PHONY: all default clean
+
+all default: aesdsocket
+
+aesdsocket: aesdsocket.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+clean:
+	rm -f aesdsocket
