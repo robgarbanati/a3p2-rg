@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,7 +71,10 @@ int main(void) {
         // rcvd_data_len
         ssize_t rcvd_data_len;
 
+        // recv from connfd into chunk.
+        // Keep connection open until client sends FIN. (recv returns 0).
         while ((rcvd_data_len = recv(connfd, chunk, sizeof(chunk), 0)) > 0) {
+            // Size up our packet by rcvd_data_len.
             char *tmp = realloc(packet, packet_len + rcvd_data_len + 1);
             if (tmp == NULL) {
                 syslog(LOG_ERR, "realloc failed, discarding packet");
@@ -80,6 +84,7 @@ int main(void) {
                 continue;
             }
             packet = tmp;
+            // append chunk to packet.
             memcpy(packet + packet_len, chunk, rcvd_data_len);
             packet_len += rcvd_data_len;
             packet[packet_len] = '\0';
@@ -101,6 +106,21 @@ int main(void) {
 
         free(packet);
         fclose(data_f);
+
+        // reopen without stdio streaming.
+        int file_fd = open(DATA_FILE, O_RDONLY);
+        if (file_fd == -1) {
+            perror("open");
+        } else {
+            char send_buf[RECV_CHUNK];
+            ssize_t nr;
+            // read into send_buf.
+            while ((nr = read(file_fd, send_buf, sizeof(send_buf))) > 0)
+                // send in chunks (send send_buf).
+                send(connfd, send_buf, nr, 0);
+            close(file_fd);
+        }
+
         close(connfd);
     }
 
