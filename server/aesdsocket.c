@@ -21,6 +21,32 @@ static void signal_handler(int sig) {
     caught_signal = 1;
 }
 
+void *connection_handler_threadfn(void *thread_param) {
+    // TODO: obtain mutex, grab data,
+    // Receive a packet from the connection
+    // Write the packet to /var/tmp/aesdsocketdata,
+    // Send full file contents back after each complete packet.
+    // release mutex.
+    // hint: use a cast like the one below to obtain thread arguments from your parameter
+    struct thread_data* thread_func_args = (struct thread_data *) thread_param;
+    return thread_param;
+
+}
+
+bool start_thread_obtaining_mutex(pthread_t *thread, pthread_mutex_t *mutex,int wait_to_obtain_ms, int wait_to_release_ms)
+{
+    /**
+     * TODO: allocate memory for thread_data, setup mutex and wait arguments, pass thread_data to created thread
+     * using threadfunc() as entry point.
+     *
+     * return true if successful.
+     *
+     * See implementation details in threading.h file comment block
+     */
+    return false;
+}
+
+
 int main(int argc, char *argv[]) {
     int daemon_mode = (argc == 2 && strcmp(argv[1], "-d") == 0);
     struct sigaction sa;
@@ -96,10 +122,12 @@ int main(int argc, char *argv[]) {
         size_t packet_len = 0;
         // Stack buffer to get portions of packets in reasonable sizes.
         char chunk[RECV_CHUNK];
-        // rcvd_data_len
         ssize_t rcvd_data_len;
 
+        // Receive chunks from the connection until there are none left.
+        // rcvd_data_len will be 0 when rd side of socket is closed.
         while ((rcvd_data_len = recv(connfd, chunk, sizeof(chunk), 0)) > 0) {
+            // resize the packet buffer for the chunk.
             char *tmp = realloc(packet, packet_len + rcvd_data_len + 1);
             if (tmp == NULL) {
                 syslog(LOG_ERR, "realloc failed, discarding packet");
@@ -109,13 +137,16 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             packet = tmp;
+            // add the chunk to the packet buffer
             memcpy(packet + packet_len, chunk, rcvd_data_len);
             packet_len += rcvd_data_len;
             packet[packet_len] = '\0';
 
             char *start = packet;
             char *nl;
+            // write each line to a file.
             while ((nl = strchr(start, '\n')) != NULL) {
+                // append to file. write from start to newline.
                 write(data_fd, start, nl - start + 1);
                 start = nl + 1;
 
