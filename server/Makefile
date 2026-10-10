@@ -6,7 +6,7 @@ CFLAGS  = -Wall -Werror
 all default: aesdsocket
 
 aesdsocket: aesdsocket.c
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $< -lpthread
 
 clean:
 	rm -f aesdsocket
