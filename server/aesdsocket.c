@@ -2,7 +2,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,31 +23,84 @@ static void signal_handler(int sig) {
     caught_signal = 1;
 }
 
+struct thread_data {
+    int connfd;
+    int data_fd;
+    pthread_mutex_t *mutex;
+    char client_ip[INET_ADDRSTRLEN];
+};
+
 void *connection_handler_threadfn(void *thread_param) {
-    // TODO: obtain mutex, grab data,
-    // Receive a packet from the connection
-    // Write the packet to /var/tmp/aesdsocketdata,
-    // Send full file contents back after each complete packet.
-    // release mutex.
-    // hint: use a cast like the one below to obtain thread arguments from your parameter
-    struct thread_data* thread_func_args = (struct thread_data *) thread_param;
-    return thread_param;
+    struct thread_data *args = (struct thread_data *)thread_param;
 
+    char *packet = NULL;
+    size_t packet_len = 0;
+    char chunk[RECV_CHUNK];
+    ssize_t rcvd;
+
+    while ((rcvd = recv(args->connfd, chunk, sizeof(chunk), 0)) > 0) {
+        char *tmp = realloc(packet, packet_len + rcvd + 1);
+        if (!tmp) {
+            syslog(LOG_ERR, "realloc failed, discarding packet");
+            free(packet);
+            packet = NULL;
+            packet_len = 0;
+            continue;
+        }
+        packet = tmp;
+        memcpy(packet + packet_len, chunk, rcvd);
+        packet_len += rcvd;
+        packet[packet_len] = '\0';
+
+        char *start = packet;
+        char *nl;
+        while ((nl = strchr(start, '\n')) != NULL) {
+            // Mutex covers write + lseek + read so no two threads interleave file I/O.
+            pthread_mutex_lock(args->mutex);
+            write(args->data_fd, start, nl - start + 1);
+            lseek(args->data_fd, 0, SEEK_SET);
+            char send_buf[RECV_CHUNK];
+            ssize_t nr;
+            while ((nr = read(args->data_fd, send_buf, sizeof(send_buf))) > 0)
+                send(args->connfd, send_buf, nr, 0);
+            pthread_mutex_unlock(args->mutex);
+            start = nl + 1;
+        }
+
+        size_t remaining = packet_len - (start - packet);
+        memmove(packet, start, remaining);
+        packet_len = remaining;
+    }
+
+    free(packet);
+    syslog(LOG_DEBUG, "Closed connection from %s", args->client_ip);
+    close(args->connfd);
+    free(args);
+    return NULL;
 }
 
-bool start_thread_obtaining_mutex(pthread_t *thread, pthread_mutex_t *mutex,int wait_to_obtain_ms, int wait_to_release_ms)
-{
-    /**
-     * TODO: allocate memory for thread_data, setup mutex and wait arguments, pass thread_data to created thread
-     * using threadfunc() as entry point.
-     *
-     * return true if successful.
-     *
-     * See implementation details in threading.h file comment block
-     */
-    return false;
-}
+static bool start_thread(pthread_mutex_t *mutex, int data_fd, int connfd,
+                         const char *client_ip) {
+    struct thread_data *td = malloc(sizeof(*td));
+    if (!td) return false;
+    td->connfd  = connfd;
+    td->data_fd = data_fd;
+    td->mutex   = mutex;
+    strncpy(td->client_ip, client_ip, INET_ADDRSTRLEN - 1);
+    td->client_ip[INET_ADDRSTRLEN - 1] = '\0';
 
+    pthread_t thread;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    int rc = pthread_create(&thread, &attr, connection_handler_threadfn, td);
+    pthread_attr_destroy(&attr);
+    if (rc != 0) {
+        free(td);
+        return false;
+    }
+    return true;
+}
 
 int main(int argc, char *argv[]) {
     int daemon_mode = (argc == 2 && strcmp(argv[1], "-d") == 0);
@@ -58,10 +113,7 @@ int main(int argc, char *argv[]) {
     openlog("aesdsocket", LOG_PID, LOG_USER);
 
     int server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_socket_fd == -1) {
-        perror("socket");
-        return -1;
-    }
+    if (server_socket_fd == -1) { perror("socket"); return -1; }
 
     int optval = 1;
     setsockopt(server_socket_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
@@ -72,106 +124,46 @@ int main(int argc, char *argv[]) {
     server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
     if (bind(server_socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
-        perror("bind");
-        close(server_socket_fd);
-        return -1;
+        perror("bind"); close(server_socket_fd); return -1;
     }
 
     if (daemon_mode) {
         pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork");
-            close(server_socket_fd);
-            return -1;
-        }
-        if (pid > 0)
-            return 0;  // parent exits, shell gets control back
-        // child continues as daemon
+        if (pid < 0) { perror("fork"); close(server_socket_fd); return -1; }
+        if (pid > 0) return 0;
         setsid();
     }
 
     if (listen(server_socket_fd, 5) == -1) {
-        perror("listen");
-        close(server_socket_fd);
-        return -1;
+        perror("listen"); close(server_socket_fd); return -1;
     }
 
-    // Opened once; persists across all connections so packets accumulate.
     int data_fd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, 0644);
-    if (data_fd == -1) {
-        perror("open");
-        close(server_socket_fd);
-        return -1;
-    }
+    if (data_fd == -1) { perror("open"); close(server_socket_fd); return -1; }
+
+    pthread_mutex_t mutex;
+    pthread_mutex_init(&mutex, NULL);
 
     while (!caught_signal) {
         struct sockaddr_in client_addr;
         socklen_t client_addrlen = sizeof(client_addr);
         int connfd = accept(server_socket_fd, (struct sockaddr *)&client_addr, &client_addrlen);
-        if (connfd == -1)
-            break;
+        if (connfd == -1) break;
 
         char client_ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
         syslog(LOG_DEBUG, "Accepted connection from %s", client_ip);
 
-        // ptr to beginning of the packet
-        char *packet = NULL;
-        // keep track of the size of the packet so far. Basically this is the length of 
-        // allocated data so far.
-        size_t packet_len = 0;
-        // Stack buffer to get portions of packets in reasonable sizes.
-        char chunk[RECV_CHUNK];
-        ssize_t rcvd_data_len;
-
-        // Receive chunks from the connection until there are none left.
-        // rcvd_data_len will be 0 when rd side of socket is closed.
-        while ((rcvd_data_len = recv(connfd, chunk, sizeof(chunk), 0)) > 0) {
-            // resize the packet buffer for the chunk.
-            char *tmp = realloc(packet, packet_len + rcvd_data_len + 1);
-            if (tmp == NULL) {
-                syslog(LOG_ERR, "realloc failed, discarding packet");
-                free(packet);
-                packet = NULL;
-                packet_len = 0;
-                continue;
-            }
-            packet = tmp;
-            // add the chunk to the packet buffer
-            memcpy(packet + packet_len, chunk, rcvd_data_len);
-            packet_len += rcvd_data_len;
-            packet[packet_len] = '\0';
-
-            char *start = packet;
-            char *nl;
-            // write each line to a file.
-            while ((nl = strchr(start, '\n')) != NULL) {
-                // append to file. write from start to newline.
-                write(data_fd, start, nl - start + 1);
-                start = nl + 1;
-
-                // Send full file contents back after each complete packet.
-                // lseek doesn't affect O_APPEND — writes still go to end.
-                lseek(data_fd, 0, SEEK_SET);
-                char send_buf[RECV_CHUNK];
-                ssize_t nr;
-                while ((nr = read(data_fd, send_buf, sizeof(send_buf))) > 0)
-                    send(connfd, send_buf, nr, 0);
-            }
-
-            size_t remaining = packet_len - (start - packet);
-            memmove(packet, start, remaining);
-            packet_len = remaining;
+        if (!start_thread(&mutex, data_fd, connfd, client_ip)) {
+            syslog(LOG_ERR, "failed to start thread for %s", client_ip);
+            close(connfd);
         }
-
-        free(packet);
-        syslog(LOG_DEBUG, "Closed connection from %s", client_ip);
-        close(connfd);
     }
 
     syslog(LOG_DEBUG, "Caught signal, exiting");
     close(server_socket_fd);
     close(data_fd);
+    pthread_mutex_destroy(&mutex);
     unlink(DATA_FILE);
     closelog();
     return 0;
