@@ -10,11 +10,13 @@
 #include <string.h>
 #include <syslog.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
-#define SERVER_PORT 9000
-#define DATA_FILE   "/var/tmp/aesdsocketdata"
-#define RECV_CHUNK  1024
+#define SERVER_PORT    9000
+#define DATA_FILE      "/var/tmp/aesdsocketdata"
+#define RECV_CHUNK     1024
+#define TIMER_INTERVAL 10
 
 static volatile sig_atomic_t caught_signal = 0;
 
@@ -29,6 +31,33 @@ struct thread_data {
     pthread_mutex_t *mutex;
     char client_ip[INET_ADDRSTRLEN];
 };
+
+struct timer_data {
+    int data_fd;
+    pthread_mutex_t *mutex;
+};
+
+void *timer_threadfn(void *thread_param) {
+    struct timer_data *args = (struct timer_data *)thread_param;
+
+    while (!caught_signal) {
+        sleep(TIMER_INTERVAL);
+        if (caught_signal) break;
+
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        char buf[64];
+        // RFC 2822: "timestamp:Fri, 09 Oct 2026 22:00:00 -0400\n"
+        strftime(buf, sizeof(buf), "timestamp:%a, %d %b %Y %T %z\n", tm_info);
+
+        pthread_mutex_lock(args->mutex);
+        write(args->data_fd, buf, strlen(buf));
+        pthread_mutex_unlock(args->mutex);
+    }
+
+    free(args);
+    return NULL;
+}
 
 void *connection_handler_threadfn(void *thread_param) {
     struct thread_data *args = (struct thread_data *)thread_param;
@@ -143,6 +172,17 @@ int main(int argc, char *argv[]) {
 
     pthread_mutex_t mutex;
     pthread_mutex_init(&mutex, NULL);
+
+    struct timer_data *td = malloc(sizeof(*td));
+    if (!td) { perror("malloc"); close(data_fd); close(server_socket_fd); return -1; }
+    td->data_fd = data_fd;
+    td->mutex   = &mutex;
+    pthread_t timer_thread;
+    pthread_attr_t timer_attr;
+    pthread_attr_init(&timer_attr);
+    pthread_attr_setdetachstate(&timer_attr, PTHREAD_CREATE_DETACHED);
+    pthread_create(&timer_thread, &timer_attr, timer_threadfn, td);
+    pthread_attr_destroy(&timer_attr);
 
     while (!caught_signal) {
         struct sockaddr_in client_addr;
