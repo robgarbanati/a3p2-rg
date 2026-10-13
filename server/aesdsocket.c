@@ -67,8 +67,10 @@ void *connection_handler_threadfn(void *thread_param) {
     char chunk[RECV_CHUNK];
     ssize_t rcvd;
 
+    // while recv reads bytes...
     while ((rcvd = recv(args->connfd, chunk, sizeof(chunk), 0)) > 0) {
         char *tmp = realloc(packet, packet_len + rcvd + 1);
+        // Handle realloc running out of mem.
         if (!tmp) {
             syslog(LOG_ERR, "realloc failed, discarding packet");
             free(packet);
@@ -77,25 +79,34 @@ void *connection_handler_threadfn(void *thread_param) {
             continue;
         }
         packet = tmp;
+        // copy chunk we just recvd into current spot in packet.
         memcpy(packet + packet_len, chunk, rcvd);
+        // inc len
         packet_len += rcvd;
+        // add delimiter.
         packet[packet_len] = '\0';
 
+        // starting at start of packet, search for a nl.
         char *start = packet;
         char *nl;
+        // while we can find nl's in packet..
         while ((nl = strchr(start, '\n')) != NULL) {
             // Mutex covers write + lseek + read so no two threads interleave file I/O.
             pthread_mutex_lock(args->mutex);
+            // write up to the nl
             write(args->data_fd, start, nl - start + 1);
+            // make sure we're at beginning for the read.
             lseek(args->data_fd, 0, SEEK_SET);
             char send_buf[RECV_CHUNK];
             ssize_t nr;
+            // send contents of whole file
             while ((nr = read(args->data_fd, send_buf, sizeof(send_buf))) > 0)
                 send(args->connfd, send_buf, nr, 0);
             pthread_mutex_unlock(args->mutex);
             start = nl + 1;
         }
 
+        // rm line from packet
         size_t remaining = packet_len - (start - packet);
         memmove(packet, start, remaining);
         packet_len = remaining;
@@ -121,8 +132,10 @@ static bool start_thread(pthread_mutex_t *mutex, int data_fd, int connfd,
     pthread_t thread;
     pthread_attr_t attr;
     pthread_attr_init(&attr);
+    // start detached. auto clean up after returning.
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     int rc = pthread_create(&thread, &attr, connection_handler_threadfn, td);
+    // no op
     pthread_attr_destroy(&attr);
     if (rc != 0) {
         free(td);
@@ -170,6 +183,7 @@ int main(int argc, char *argv[]) {
     int data_fd = open(DATA_FILE, O_RDWR | O_CREAT | O_APPEND, 0644);
     if (data_fd == -1) { perror("open"); close(server_socket_fd); return -1; }
 
+    // create and init a mutex
     pthread_mutex_t mutex;
     pthread_mutex_init(&mutex, NULL);
 
@@ -177,6 +191,7 @@ int main(int argc, char *argv[]) {
     if (!td) { perror("malloc"); close(data_fd); close(server_socket_fd); return -1; }
     td->data_fd = data_fd;
     td->mutex   = &mutex;
+    // create timer thread
     pthread_t timer_thread;
     pthread_attr_t timer_attr;
     pthread_attr_init(&timer_attr);
@@ -187,6 +202,7 @@ int main(int argc, char *argv[]) {
     while (!caught_signal) {
         struct sockaddr_in client_addr;
         socklen_t client_addrlen = sizeof(client_addr);
+        // wait for a connection
         int connfd = accept(server_socket_fd, (struct sockaddr *)&client_addr, &client_addrlen);
         if (connfd == -1) break;
 
@@ -194,6 +210,7 @@ int main(int argc, char *argv[]) {
         inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
         syslog(LOG_DEBUG, "Accepted connection from %s", client_ip);
 
+        // start a thread for each connection.
         if (!start_thread(&mutex, data_fd, connfd, client_ip)) {
             syslog(LOG_ERR, "failed to start thread for %s", client_ip);
             close(connfd);
