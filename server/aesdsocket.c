@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -51,7 +52,9 @@ void *timer_threadfn(void *thread_param) {
         strftime(buf, sizeof(buf), "timestamp:%a, %d %b %Y %T %z\n", tm_info);
 
         pthread_mutex_lock(args->mutex);
-        write(args->data_fd, buf, strlen(buf));
+        if (write(args->data_fd, buf, strlen(buf)) < 0) {
+            syslog(LOG_ERR, "write failed: %s", strerror(errno));
+        }
         pthread_mutex_unlock(args->mutex);
     }
 
@@ -94,7 +97,9 @@ void *connection_handler_threadfn(void *thread_param) {
             // Mutex covers write + lseek + read so no two threads interleave file I/O.
             pthread_mutex_lock(args->mutex);
             // write up to the nl
-            write(args->data_fd, start, nl - start + 1);
+            if (write(args->data_fd, start, nl - start + 1) < 0) {
+                syslog(LOG_ERR, "write failed: %s", strerror(errno));
+            }
             // make sure we're at beginning for the read.
             lseek(args->data_fd, 0, SEEK_SET);
             char send_buf[RECV_CHUNK];
